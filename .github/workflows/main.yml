@@ -1,4 +1,4 @@
-name: CI Final Complete
+name: CI Fixed Complete
 
 on:
   workflow_dispatch:
@@ -20,87 +20,67 @@ jobs:
           echo "=== Build Environment ==="
           echo "MSBuild: $(where msbuild)"
           echo "NuGet: $(where nuget)"
-          echo "7z: C:\Program Files\7-Zip\7z.exe"
 
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup NuGet
-        uses: nuget/setup-nuget@v1
-
     #
-    # Compile Sandboxie Core (BẮT BUỘC)
+    # Compile Sandboxie Core - FIXED PATHS
     #
 
-      - name: Build Sandboxie x86 (DLLs & svc)
-        run: msbuild /t:build Sandboxie\SandboxDll.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:8
-
-      - name: Build Sandboxie x64 (all)
-        run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:8
-
-    #
-    # Build SbieShell (OPTIONAL - có thể fail)
-    #
-
-      - name: Restore NuGet Packages for SbieShell
-        run: nuget restore SandboxiePlus\SbieShell\SbieShell.sln
-
-      - name: Build SbieShell x64 (Optional - Continue on Error)
+      - name: Build Sandboxie Core x86
         run: |
-          echo "=== Building SbieShell (may fail due to WinRT) ==="
-          msbuild SandboxiePlus\SbieShell\SbieShell.sln `
-            /t:build `
-            /p:Configuration="Release" `
-            /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
-            /p:PlatformToolset=v143 `
-            -maxcpucount:4
-        continue-on-error: true
+          echo "=== Building x86 Components ==="
+          msbuild Sandboxie\SandboxDll.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:4 -verbosity:minimal
+          msbuild Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:4 -verbosity:minimal
 
-    #
-    # Build Sandboxie Tools
-    #
-
-      - name: Build Sandboxie-Tools x64
-        run: msbuild /t:build SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:8
-
-    #
-    # Build Sandboxie Plus UI (Qt) - Optional
-    #
-
-      - name: Build Qt UI (Optional)
+      - name: Build Sandboxie Core x64
         run: |
-          echo "=== Looking for Qt ==="
-          $qtPaths = @(
-            "C:\Qt\5.15.2\msvc2019_64",
-            "C:\Qt\6.5.0\msvc2019_64",
-            "C:\Qt\6.2.4\msvc2019_64"
+          echo "=== Building x64 Components ==="
+          msbuild Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:4 -verbosity:minimal
+
+    #
+    # Debug tìm file đã build
+    #
+
+      - name: Find Built Core Files
+        run: |
+          echo "=== LOCATING CORE FILES ==="
+          
+          # Tìm trong các đường dẫn có thể
+          $searchPaths = @(
+            "bin",
+            "x64", 
+            "Win32",
+            "Sandboxie\bin",
+            "Sandboxie\x64",
+            "Sandboxie\Win32"
           )
           
-          $foundQt = $false
-          foreach ($path in $qtPaths) {
-            if (Test-Path "$path\bin\qmake.exe") {
-              echo "Found Qt at: $path"
-              & "$path\bin\qmake.exe" SandboxiePlus\SandboxiePlus.pro -spec win32-msvc
-              
-              if (Get-Command jom -ErrorAction SilentlyContinue) {
-                jom
-              } else {
-                msbuild release\SandboxiePlus.vcxproj /p:Configuration=Release
-              }
-              
-              $foundQt = $true
-              break
+          foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+              echo "--- Searching in: $path ---"
+              Get-ChildItem $path -Recurse -Filter "*Sbie*" -ErrorAction SilentlyContinue | Select-Object FullName, Length
             }
           }
           
-          if (-not $foundQt) {
-            echo "Qt not found, building core components only..."
+          # Tìm file cụ thể
+          $criticalFiles = @("SbieDll.dll", "SbieSvc.exe", "Start.exe", "SbieDrv.sys")
+          foreach ($file in $criticalFiles) {
+            echo "--- Searching for: $file ---"
+            Get-ChildItem -Recurse -Filter $file -ErrorAction SilentlyContinue | Select-Object FullName, Length
           }
-        continue-on-error: true
 
     #
-    # Merge everything together - QUAN TRỌNG
+    # Build các components khác
+    #
+
+      - name: Build Sandboxie-Tools x64
+        run: |
+          msbuild SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:4
+
+    #
+    # Tạo package với đường dẫn chính xác
     #
 
       - name: Create Portable Package
@@ -110,70 +90,68 @@ jobs:
             New-Item -ItemType Directory -Path "Installer\SbiePlus_x64" -Force 
           }
           
-          echo "=== Copying Core Files ==="
+          echo "=== COPYING FILES TO PACKAGE ==="
           
-          # 1. Copy CORE FILES - QUAN TRỌNG NHẤT
-          if (Test-Path "bin\x64\SbieRelease") {
-            echo "Copying x64 core components..."
-            copy "bin\x64\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          # Tìm và copy core files - QUAN TRỌNG
+          $copiedFiles = @()
+          
+          # Tìm SbieDll.dll
+          $sbieDll = Get-ChildItem -Recurse -Filter "SbieDll.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sbieDll) {
+            copy $sbieDll.FullName "Installer\SbiePlus_x64\"
+            $copiedFiles += "SbieDll.dll"
           }
           
-          if (Test-Path "bin\Win32\SbieRelease") {
-            echo "Copying x86 core components..."
-            copy "bin\Win32\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          # Tìm SbieSvc.exe
+          $sbieSvc = Get-ChildItem -Recurse -Filter "SbieSvc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sbieSvc) {
+            copy $sbieSvc.FullName "Installer\SbiePlus_x64\"
+            $copiedFiles += "SbieSvc.exe"
           }
           
-          # 2. Copy SbieShell (nếu build thành công)
-          if (Test-Path "SandboxiePlus\SbieShell\x64\Release") {
-            echo "Copying SbieShell..."
-            copy "SandboxiePlus\SbieShell\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse -Force
-          } else {
-            echo "SbieShell not available (WinRT dependency issue)"
+          # Tìm Start.exe
+          $startExe = Get-ChildItem -Recurse -Filter "Start.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($startExe) {
+            copy $startExe.FullName "Installer\SbiePlus_x64\"
+            $copiedFiles += "Start.exe"
           }
           
-          # 3. Copy Tools
+          # Tìm SbieDrv.sys
+          $sbieDrv = Get-ChildItem -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sbieDrv) {
+            copy $sbieDrv.FullName "Installer\SbiePlus_x64\"
+            $copiedFiles += "SbieDrv.sys"
+          }
+          
+          # Copy Tools
           if (Test-Path "SandboxieTools\x64\Release") {
-            echo "Copying Tools..."
             copy "SandboxieTools\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse -Force
+            $copiedFiles += "Tools"
           }
           
-          # 4. Copy Qt UI (nếu có)
-          if (Test-Path "release\SandboxiePlus.exe") {
-            echo "Copying Qt UI..."
-            copy "release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
-          } elseif (Test-Path "SandboxiePlus\release\SandboxiePlus.exe") {
-            copy "SandboxiePlus\release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
-          }
+          echo "=== COPIED FILES ==="
+          $copiedFiles | ForEach-Object { echo "✅ $_" }
           
-          # 5. Download OpenSSL nếu cần
-          if (!(Test-Path "Installer\SbiePlus_x64\libcrypto-3-x64.dll")) {
-            echo "Downloading OpenSSL..."
-            curl -L -o openssl.zip "https://github.com/openssl/openssl/releases/download/openssl-3.2.1/openssl-3.2.1.zip" -f
-            if (Test-Path "openssl.zip") {
-              7z x openssl.zip -oopenssl_temp\ > $null
-              if (Test-Path "openssl_temp\openssl-3.2.1\bin\*.dll") {
-                copy "openssl_temp\openssl-3.2.1\bin\*.dll" "Installer\SbiePlus_x64\" -Force
-              }
-            }
-          }
-          
-          echo "=== Final Package Contents ==="
+          echo "=== FINAL PACKAGE CONTENTS ==="
           Get-ChildItem "Installer\SbiePlus_x64\" -Name | Sort-Object
           
           # Kiểm tra file quan trọng
-          $criticalFiles = @(
-            "SbieDll.dll",
-            "SbieSvc.exe", 
-            "Start.exe",
-            "SbieDrv.sys"
-          )
+          $criticalFiles = @("SbieDll.dll", "SbieSvc.exe", "Start.exe", "SbieDrv.sys")
+          $missingFiles = @()
           
           foreach ($file in $criticalFiles) {
             if (Test-Path "Installer\SbiePlus_x64\$file") {
               echo "✅ $file - PRESENT"
             } else {
               echo "❌ $file - MISSING"
+              $missingFiles += $file
             }
+          }
+          
+          # Nếu thiếu file quan trọng, tạo error
+          if ($missingFiles.Count -gt 0) {
+            echo "::error::MISSING CRITICAL FILES: $($missingFiles -join ', ')"
+            exit 1
           }
 
     #
@@ -187,15 +165,3 @@ jobs:
           path: |
             Installer/SbiePlus_x64/*
           retention-days: 60
-          if-no-files-found: error
-
-      - name: Show Build Summary
-        run: |
-          echo "=== BUILD SUMMARY ==="
-          echo "✅ Sandboxie Core - BUILT SUCCESSFULLY"
-          echo "⚠️  SbieShell - OPTIONAL (may be missing due to WinRT)"
-          echo "✅ Sandboxie Tools - BUILT SUCCESSFULLY" 
-          echo "⚠️  Qt UI - OPTIONAL (may be missing)"
-          echo ""
-          echo "📦 Portable package created in: Installer/SbiePlus_x64/"
-          echo "🎯 Core functionality: FULLY OPERATIONAL"
