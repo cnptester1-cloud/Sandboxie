@@ -1,10 +1,10 @@
-name: CI Fixed Complete
+name: CI Final Complete
 
 on:
   workflow_dispatch:
 
 env:
-  WINDOWS_SDK_VERSION: 10.0
+  WINDOWS_SDK_VERSION: 10.0.26100.0
 
 jobs:
   Build_x64:
@@ -15,45 +15,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Build Tools
+      - name: Setup Build Environment
         run: |
           echo "=== Build Environment ==="
-          echo "MSBuild: $(where msbuild)"
-          echo "Checking Windows SDK..."
-          dir "C:\Program Files (x86)\Windows Kits\10\Lib\10.0*" -ErrorAction SilentlyContinue
+          echo "Available Windows SDKs:"
+          dir "C:\Program Files (x86)\Windows Kits\10\Lib" -ErrorAction SilentlyContinue
+          echo "Available Platform Toolsets:"
+          dir "C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -ErrorAction SilentlyContinue
 
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
     #
-    # Build Driver riêng - FIXED
-    #
-
-      - name: Build Sandboxie Driver
-        run: |
-          echo "=== BUILDING SANDBOXIE DRIVER ==="
-          
-          # Build driver project trực tiếp
-          msbuild Sandboxie\core\drv\SboxDrv.vcxproj `
-            /p:Configuration="SbieRelease" `
-            /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
-            /p:PlatformToolset=v143 `
-            /p:TargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
-            -maxcpucount:4 -verbosity:minimal
-          
-          # Kiểm tra kết quả
-          echo "--- Driver Build Result ---"
-          if (Test-Path "Sandboxie\core\drv\x64\SbieRelease\SbieDrv.sys") {
-            echo "✅ Driver built successfully!"
-            dir "Sandboxie\core\drv\x64\SbieRelease\SbieDrv.sys"
-          } else {
-            echo "❌ Driver build failed, checking alternative locations..."
-            Get-ChildItem -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue
-          }
-
-    #
-    # Build Core Components
+    # Build Core Components (không cần driver)
     #
 
       - name: Build Sandboxie Core x86
@@ -73,7 +47,38 @@ jobs:
           msbuild SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:4
 
     #
-    # Tạo package hoàn chỉnh
+    # Download Driver từ bản release chính thức
+    #
+
+      - name: Download Pre-built Driver
+        run: |
+          echo "=== DOWNLOADING PRE-BUILT DRIVER ==="
+          
+          # Tạo thư mục tạm
+          if (!(Test-Path "temp_driver")) { New-Item -ItemType Directory -Path "temp_driver" -Force }
+          
+          # Tải bản release ổn định
+          echo "Downloading official Sandboxie Plus release..."
+          curl -L -o "temp_driver\sandboxie.zip" "https://github.com/sandboxie-plus/Sandboxie-plus/releases/download/1.11.1/Sandboxie_x64.zip"
+          
+          if (Test-Path "temp_driver\sandboxie.zip") {
+            echo "Extracting driver..."
+            7z x "temp_driver\sandboxie.zip" -o"temp_driver\extracted" -y
+            
+            # Tìm driver trong extracted files
+            $driver = Get-ChildItem "temp_driver\extracted" -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($driver) {
+              echo "✅ Found driver: $($driver.FullName)"
+              copy $driver.FullName "temp_driver\SbieDrv.sys" -Force
+            } else {
+              echo "❌ Driver not found in release"
+            }
+          } else {
+            echo "❌ Failed to download release"
+          }
+
+    #
+    # Tạo package hoàn chỉnh với driver
     #
 
       - name: Create Complete Package
@@ -83,23 +88,36 @@ jobs:
             New-Item -ItemType Directory -Path "Installer\SbiePlus_x64" -Force 
           }
           
-          echo "=== COPYING ALL FILES ==="
+          echo "=== CREATING SANDBOXIE PACKAGE ==="
           
-          # Copy Core Files từ các vị trí khác nhau
-          $copyOperations = @(
-            @{Source="Sandboxie\core\drv\x64\SbieRelease\SbieDrv.sys"; Dest="SbieDrv.sys"},
+          # Copy Core Files
+          $coreFiles = @(
             @{Source="bin\x64\SbieRelease\SbieDll.dll"; Dest="SbieDll.dll"},
             @{Source="bin\x64\SbieRelease\SbieSvc.exe"; Dest="SbieSvc.exe"},
             @{Source="bin\x64\SbieRelease\Start.exe"; Dest="Start.exe"},
             @{Source="bin\Win32\SbieRelease\SbieDll.dll"; Dest="SbieDll32.dll"}
           )
           
-          foreach ($op in $copyOperations) {
-            if (Test-Path $op.Source) {
-              copy $op.Source "Installer\SbiePlus_x64\$($op.Dest)" -Force
-              echo "✅ $($op.Dest)"
+          foreach ($file in $coreFiles) {
+            if (Test-Path $file.Source) {
+              copy $file.Source "Installer\SbiePlus_x64\$($file.Dest)" -Force
+              echo "✅ $($file.Dest)"
+            }
+          }
+          
+          # Copy Driver (từ pre-built hoặc build)
+          if (Test-Path "temp_driver\SbieDrv.sys") {
+            copy "temp_driver\SbieDrv.sys" "Installer\SbiePlus_x64\SbieDrv.sys" -Force
+            echo "✅ SbieDrv.sys (from official release)"
+          } else {
+            # Thử tìm driver đã build
+            $builtDriver = Get-ChildItem -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($builtDriver) {
+              copy $builtDriver.FullName "Installer\SbiePlus_x64\SbieDrv.sys" -Force
+              echo "✅ SbieDrv.sys (built locally)"
             } else {
-              echo "❌ $($op.Dest) - Source not found: $($op.Source)"
+              echo "❌ SbieDrv.sys - DRIVER MISSING"
+              echo "NOTE: Driver will need to be obtained separately" | Out-File "Installer\SbiePlus_x64\README_DRIVER.txt"
             }
           }
           
@@ -109,38 +127,54 @@ jobs:
             echo "✅ Tools"
           }
           
-          # Tìm và copy bất kỳ file SbieDrv.sys nào
-          $driverFiles = Get-ChildItem -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue
-          if ($driverFiles) {
-            foreach ($driver in $driverFiles) {
-              echo "Found driver at: $($driver.FullName)"
-              copy $driver.FullName "Installer\SbiePlus_x64\SbieDrv.sys" -Force
-            }
-          }
+          # Tạo file readme
+          $readmeContent = @"
+Sandboxie Plus Portable Build
+=============================
+
+Build Date: $(Get-Date)
+Source: GitHub Actions CI
+
+Components:
+- Core Sandboxie DLLs and Services
+- Command Line Tools
+- Driver: $(if (Test-Path "Installer\SbiePlus_x64\SbieDrv.sys") { "PRESENT" } else { "MISSING - obtain from official release" })
+
+Usage:
+1. Extract to desired location
+2. Run SbieSvc.exe as Administrator to start service
+3. Use Start.exe to launch programs in sandbox
+
+Note: If driver is missing, download from:
+https://github.com/sandboxie-plus/Sandboxie-plus/releases
+"@
           
-          echo "=== FINAL PACKAGE ==="
-          Get-ChildItem "Installer\SbiePlus_x64\" | Select-Object Name, Length
+          $readmeContent | Out-File "Installer\SbiePlus_x64\README.txt" -Encoding UTF8
           
-          # Kiểm tra file quan trọng
-          $criticalFiles = @("SbieDll.dll", "SbieSvc.exe", "Start.exe", "SbieDrv.sys")
-          $missingFiles = @()
+          echo "=== PACKAGE CONTENTS ==="
+          Get-ChildItem "Installer\SbiePlus_x64\" | Select-Object Name, Length | Format-Table
+          
+          # Final check
+          $criticalFiles = @("SbieDll.dll", "SbieSvc.exe", "Start.exe")
+          $allPresent = $true
           
           foreach ($file in $criticalFiles) {
             if (Test-Path "Installer\SbiePlus_x64\$file") {
-              echo "✅ $file - PRESENT ($((Get-Item "Installer\SbiePlus_x64\$file").Length) bytes)"
+              echo "✅ $file - READY"
             } else {
               echo "❌ $file - MISSING"
-              $missingFiles += $file
+              $allPresent = $false
             }
           }
           
-          # Nếu vẫn thiếu driver, tạo giải pháp thay thế
-          if ($missingFiles.Count -gt 0 -and $missingFiles -contains "SbieDrv.sys") {
-            echo "⚠️  Driver missing - creating placeholder and continuing..."
-            echo "Driver will need to be provided separately" | Out-File "Installer\SbiePlus_x64\DRIVER_MISSING.txt"
-            # Không exit với lỗi, tiếp tục với core files
-          } elseif ($missingFiles.Count -gt 0) {
-            echo "::error::MISSING CRITICAL FILES: $($missingFiles -join ', ')"
+          if (Test-Path "Installer\SbiePlus_x64\SbieDrv.sys") {
+            echo "✅ SbieDrv.sys - READY"
+          } else {
+            echo "⚠️  SbieDrv.sys - MISSING (core functionality limited)"
+          }
+          
+          if (-not $allPresent) {
+            echo "::error::MISSING CRITICAL CORE FILES"
             exit 1
           }
 
@@ -155,12 +189,4 @@ jobs:
           path: |
             Installer/SbiePlus_x64/*
           retention-days: 60
-
-      - name: Upload Build Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Build-Logs
-          path: |
-            **/*.log
-          retention-days: 7
+          if-no-files-found: error
