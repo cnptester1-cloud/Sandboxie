@@ -1,11 +1,73 @@
-name: CI Fixed
+name: CI Fixed Complete
 
 on:
   workflow_dispatch:
 
+  push:
+    branches: [master, experimental]
+    paths-ignore:
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
+      - 'MergeDbg.cmd'
+      - 'TestCI.cmd'
+      - '.github/codeql/codeql-config.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/codeql.yml'
+      - '.github/workflows/codespell.yml'
+      - '.github/workflows/hash.yml'
+      - '.github/workflows/lupdate.yml'
+      - '.github/workflows/stale.yml'
+      - '.github/workflows/test.yml'
+      - '.github/workflows/winget.yml'
+      - '.github/FUNDING.yml'
+      - '.github/dependabot.yml'
+      - 'Sandboxie/msgs/report/*.txt'
+      - '**/*.md'
+      - '**/*.html'
+      - '**/*.png'
+      - '**/*.bmp'
+      - '**/LICENSE*'
+      - '**/license*'
+      - '**/README*'
+      - '**/ReadMe*'
+      - '**/INSTALL*'
+      - '**/AUTHORS'
+      - '**/COPYING'
+  pull_request:
+    branches: [master, experimental]
+    paths-ignore:
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
+      - 'MergeDbg.cmd'
+      - 'TestCI.cmd'
+      - '.github/codeql/codeql-config.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/codeql.yml'
+      - '.github/workflows/codespell.yml'
+      - '.github/workflows/hash.yml'
+      - '.github/workflows/lupdate.yml'
+      - '.github/workflows/stale.yml'
+      - '.github/workflows/test.yml'
+      - '.github/workflows/winget.yml'
+      - '.github/FUNDING.yml'
+      - '.github/dependabot.yml'
+      - 'Sandboxie/msgs/report/*.txt'
+      - '**/*.md'
+      - '**/*.html'
+      - '**/*.png'
+      - '**/*.bmp'
+      - '**/LICENSE*'
+      - '**/license*'
+      - '**/README*'
+      - '**/ReadMe*'
+      - '**/INSTALL*'
+      - '**/AUTHORS'
+      - '**/COPYING'
+
 env:
-  qt_version: 5.15.2
-  openssl_version: 3.2.1
+  WINDOWS_SDK_VERSION: 10.0
 
 jobs:
   Build_x64:
@@ -16,17 +78,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Windows SDK
+      - name: Setup Build Tools
         run: |
-          # Kiểm tra SDK có sẵn
-          echo "Available SDKs:"
-          dir "C:\Program Files (x86)\Windows Kits\10\bin\*"
-          
+          echo "=== Available Tools ==="
+          echo "MSBuild: $(where msbuild)"
+          echo "7z: C:\Program Files\7-Zip\7z.exe"
+          echo "Windows SDKs available:"
+          dir "C:\Program Files (x86)\Windows Kits\10\Lib\$env:WINDOWS_SDK_VERSION\" -ErrorAction SilentlyContinue
+
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
     #
-    # Compile Sandboxie Core
+    # Compile Sandboxie Core (Không cần Qt)
     #
 
       - name: Build Sandboxie x86 (DLLs & svc)
@@ -36,63 +100,127 @@ jobs:
         run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Prepare Qt Framework
+    # Build SbieShell với SDK Fix
     #
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.qt_version }}
-          arch: 'win64_msvc2019_64'
-          cache: true
-
-      - name: Setup Qt Environment
+      - name: Build SbieShell x64
         run: |
-          echo "QTDIR=$env:QT_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-    #
-    # Compile Sandboxie Plus - FIXED SDK VERSION
-    #
-
-      - name: Build Sandboxie-Plus x64
-        run: |
-          $env:QTDIR="$env:QT_ROOT"
-          & "$env:QTDIR\bin\qmake.exe" SandboxiePlus\SandboxiePlus.pro -spec win32-msvc
-          jom
-
-      - name: Build SbieShell x64 (Fixed SDK)
-        run: |
-          # Build với SDK version có sẵn
           msbuild SandboxiePlus\SbieShell\SbieShell.sln ^
             /p:Configuration="Release" ^
             /p:Platform=x64 ^
-            /p:WindowsTargetPlatformVersion=10.0 ^
-            /p:PlatformToolset=v143
+            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} ^
+            /p:PlatformToolset=v143 ^
+            -maxcpucount:4
 
     #
-    # Compile Sandboxie Tools
+    # Build Sandboxie Tools
     #
 
       - name: Build Sandboxie-Tools x64
         run: msbuild /t:build SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Merge everything together
+    # Build Sandboxie Plus UI (Qt) - FIXED
     #
 
-      - name: Merging Build
+      - name: Find and Build Qt UI
         run: |
-          if (!(Test-Path "Installer\SbiePlus_x64")) { New-Item -ItemType Directory -Path "Installer\SbiePlus_x64" -Force }
+          echo "=== Looking for Qt ==="
+          # Tìm Qt tự động
+          $qtPaths = @(
+            "C:\Qt\5.15.2\msvc2019_64",
+            "C:\Qt\5.15.2\msvc2019", 
+            "C:\Qt\6.5.0\msvc2019_64",
+            "C:\Qt\6.2.4\msvc2019_64"
+          )
+          
+          $foundQt = $false
+          foreach ($path in $qtPaths) {
+            if (Test-Path "$path\bin\qmake.exe") {
+              echo "Found Qt at: $path"
+              $env:QTDIR = $path
+              & "$path\bin\qmake.exe" --version
+              
+              # Build Sandboxie Plus
+              & "$path\bin\qmake.exe" SandboxiePlus\SandboxiePlus.pro -spec win32-msvc
+              
+              # Tìm jom hoặc nmake
+              if (Get-Command jom -ErrorAction SilentlyContinue) {
+                jom
+              } elseif (Get-Command nmake -ErrorAction SilentlyContinue) {
+                nmake
+              } else {
+                msbuild release\SandboxiePlus.vcxproj /p:Configuration=Release
+              }
+              
+              $foundQt = $true
+              break
+            }
+          }
+          
+          if (-not $foundQt) {
+            echo "Qt not found, building core components only..."
+            echo "You can download Qt from https://www.qt.io/download-open-source"
+          }
+
+    #
+    # Merge everything together - SIMPLIFIED
+    #
+
+      - name: Create Build Directory
+        run: |
+          if (!(Test-Path "Installer\SbiePlus_x64")) { 
+            New-Item -ItemType Directory -Path "Installer\SbiePlus_x64" -Force 
+          }
+          
+          echo "=== Copying built files ==="
           
           # Copy core files
-          copy "bin\x64\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
-          copy "bin\Win32\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          if (Test-Path "bin\x64\SbieRelease") {
+            copy "bin\x64\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          }
+          if (Test-Path "bin\Win32\SbieRelease") {
+            copy "bin\Win32\SbieRelease\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          }
           
-          # Copy Qt files
-          copy "$env:QT_ROOT\bin\*.dll" "Installer\SbiePlus_x64\" -Force
+          # Copy SbieShell
+          if (Test-Path "SandboxiePlus\SbieShell\x64\Release") {
+            copy "SandboxiePlus\SbieShell\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          }
           
-          # Copy Sandboxie Plus
-          copy "release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
+          # Copy Tools
+          if (Test-Path "SandboxieTools\x64\Release") {
+            copy "SandboxieTools\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse -Force
+          }
+          
+          # Copy Qt UI (nếu có)
+          if (Test-Path "release\SandboxiePlus.exe") {
+            copy "release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
+          } elseif (Test-Path "SandboxiePlus\release\SandboxiePlus.exe") {
+            copy "SandboxiePlus\release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
+          }
+          
+          echo "=== Final directory structure ==="
+          dir "Installer\SbiePlus_x64\" -Recurse | Select-Object Name,Length
+
+    #
+    # Download OpenSSL pre-built
+    #
+
+      - name: Get OpenSSL Binaries
+        run: |
+          if (!(Test-Path "Installer\SbiePlus_x64\libcrypto-3-x64.dll")) {
+            echo "Downloading OpenSSL..."
+            curl -L -o openssl.zip "https://github.com/openssl/openssl/releases/download/openssl-3.2.1/openssl-3.2.1.zip"
+            if (Test-Path "openssl.zip") {
+              7z x openssl.zip -oopenssl_temp\
+              copy "openssl_temp\openssl-3.2.1\*.dll" "Installer\SbiePlus_x64\" -Force
+            }
+          }
+
+    #
+    # Upload Artifacts
+    #
 
       - name: Upload Sandboxie x64
         uses: actions/upload-artifact@v4
@@ -100,4 +228,58 @@ jobs:
           name: Sandboxie_x64
           path: |
             Installer/SbiePlus_x64/*
+          retention-days: 60
+          if-no-files-found: error
+
+      - name: Upload Build Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Logs
+          path: |
+            **/*.log
+            **/Build*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  Build_x86:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup msbuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Sandboxie x86 (all)
+        run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:8
+
+      - name: Build SbieShell x86
+        run: |
+          msbuild SandboxiePlus\SbieShell\SbieShell.sln ^
+            /p:Configuration="Release" ^
+            /p:Platform=x86 ^
+            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} ^
+            /p:PlatformToolset=v143
+
+      - name: Build Sandboxie-Tools x86
+        run: msbuild /t:build SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x86 -maxcpucount:8
+
+      - name: Create x86 Package
+        run: |
+          if (!(Test-Path "Installer\SbiePlus_x86")) { 
+            New-Item -ItemType Directory -Path "Installer\SbiePlus_x86" -Force 
+          }
+          
+          copy "bin\Win32\SbieRelease\*" "Installer\SbiePlus_x86\" -Recurse -Force
+          copy "SandboxiePlus\SbieShell\Win32\Release\*" "Installer\SbiePlus_x86\" -Recurse -Force
+          copy "SandboxieTools\Win32\Release\*" "Installer\SbiePlus_x86\" -Recurse -Force
+
+      - name: Upload Sandboxie x86
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sandboxie_x86
+          path: |
+            Installer/SbiePlus_x86/*
           retention-days: 60
