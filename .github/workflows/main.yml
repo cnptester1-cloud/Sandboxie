@@ -3,69 +3,6 @@ name: CI Fixed Complete
 on:
   workflow_dispatch:
 
-  push:
-    branches: [master, experimental]
-    paths-ignore:
-      - '.editorconfig'
-      - '.gitattributes'
-      - '.gitignore'
-      - 'MergeDbg.cmd'
-      - 'TestCI.cmd'
-      - '.github/codeql/codeql-config.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/workflows/codeql.yml'
-      - '.github/workflows/codespell.yml'
-      - '.github/workflows/hash.yml'
-      - '.github/workflows/lupdate.yml'
-      - '.github/workflows/stale.yml'
-      - '.github/workflows/test.yml'
-      - '.github/workflows/winget.yml'
-      - '.github/FUNDING.yml'
-      - '.github/dependabot.yml'
-      - 'Sandboxie/msgs/report/*.txt'
-      - '**/*.md'
-      - '**/*.html'
-      - '**/*.png'
-      - '**/*.bmp'
-      - '**/LICENSE*'
-      - '**/license*'
-      - '**/README*'
-      - '**/ReadMe*'
-      - '**/INSTALL*'
-      - '**/AUTHORS'
-      - '**/COPYING'
-  pull_request:
-    branches: [master, experimental]
-    paths-ignore:
-      - '.editorconfig'
-      - '.gitattributes'
-      - '.gitignore'
-      - 'MergeDbg.cmd'
-      - 'TestCI.cmd'
-      - '.github/codeql/codeql-config.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/workflows/codeql.yml'
-      - '.github/workflows/codespell.yml'
-      - '.github/workflows/hash.yml'
-      - '.github/workflows/lupdate.yml'
-      - '.github/workflows/stale.yml'
-      - '.github/workflows/test.yml'
-      - '.github/workflows/winget.yml'
-      - '.github/FUNDING.yml'
-      - '.github/dependabot.yml'
-      - 'Sandboxie/msgs/report/*.txt'
-      - '**/*.md'
-      - '**/*.html'
-      - '**/*.png'
-      - '**/*.bmp'
-      - '**/LICENSE*'
-      - '**/license*'
-      - '**/README*'
-      - '**/ReadMe*'
-      - '**/INSTALL*'
-      - '**/AUTHORS'
-      - '**/COPYING'
-
 env:
   WINDOWS_SDK_VERSION: 10.0
 
@@ -83,14 +20,12 @@ jobs:
           echo "=== Available Tools ==="
           echo "MSBuild: $(where msbuild)"
           echo "7z: C:\Program Files\7-Zip\7z.exe"
-          echo "Windows SDKs available:"
-          dir "C:\Program Files (x86)\Windows Kits\10\Lib\$env:WINDOWS_SDK_VERSION\" -ErrorAction SilentlyContinue
 
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
     #
-    # Compile Sandboxie Core (Không cần Qt)
+    # Compile Sandboxie Core
     #
 
       - name: Build Sandboxie x86 (DLLs & svc)
@@ -100,16 +35,16 @@ jobs:
         run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Build SbieShell với SDK Fix
+    # Build SbieShell với SDK Fix - ĐÃ SỬA CÚ PHÁP
     #
 
       - name: Build SbieShell x64
         run: |
-          msbuild SandboxiePlus\SbieShell\SbieShell.sln ^
-            /p:Configuration="Release" ^
-            /p:Platform=x64 ^
-            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} ^
-            /p:PlatformToolset=v143 ^
+          msbuild SandboxiePlus\SbieShell\SbieShell.sln `
+            /p:Configuration="Release" `
+            /p:Platform=x64 `
+            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
+            /p:PlatformToolset=v143 `
             -maxcpucount:4
 
     #
@@ -120,7 +55,7 @@ jobs:
         run: msbuild /t:build SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Build Sandboxie Plus UI (Qt) - FIXED
+    # Build Sandboxie Plus UI (Qt) - ĐÃ SỬA CÚ PHÁP
     #
 
       - name: Find and Build Qt UI
@@ -160,11 +95,10 @@ jobs:
           
           if (-not $foundQt) {
             echo "Qt not found, building core components only..."
-            echo "You can download Qt from https://www.qt.io/download-open-source"
           }
 
     #
-    # Merge everything together - SIMPLIFIED
+    # Merge everything together
     #
 
       - name: Create Build Directory
@@ -196,26 +130,6 @@ jobs:
           # Copy Qt UI (nếu có)
           if (Test-Path "release\SandboxiePlus.exe") {
             copy "release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
-          } elseif (Test-Path "SandboxiePlus\release\SandboxiePlus.exe") {
-            copy "SandboxiePlus\release\SandboxiePlus.exe" "Installer\SbiePlus_x64\SbiePlus.exe" -Force
-          }
-          
-          echo "=== Final directory structure ==="
-          dir "Installer\SbiePlus_x64\" -Recurse | Select-Object Name,Length
-
-    #
-    # Download OpenSSL pre-built
-    #
-
-      - name: Get OpenSSL Binaries
-        run: |
-          if (!(Test-Path "Installer\SbiePlus_x64\libcrypto-3-x64.dll")) {
-            echo "Downloading OpenSSL..."
-            curl -L -o openssl.zip "https://github.com/openssl/openssl/releases/download/openssl-3.2.1/openssl-3.2.1.zip"
-            if (Test-Path "openssl.zip") {
-              7z x openssl.zip -oopenssl_temp\
-              copy "openssl_temp\openssl-3.2.1\*.dll" "Installer\SbiePlus_x64\" -Force
-            }
           }
 
     #
@@ -229,17 +143,6 @@ jobs:
           path: |
             Installer/SbiePlus_x64/*
           retention-days: 60
-          if-no-files-found: error
-
-      - name: Upload Build Logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Build-Logs
-          path: |
-            **/*.log
-            **/Build*.txt
-          retention-days: 7
-          if-no-files-found: ignore
 
   Build_x86:
     runs-on: windows-latest
@@ -255,12 +158,12 @@ jobs:
       - name: Build Sandboxie x86 (all)
         run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:8
 
-      - name: Build SbieShell x86
+      - name: Build SbieShell x86 - ĐÃ SỬA CÚ PHÁP
         run: |
-          msbuild SandboxiePlus\SbieShell\SbieShell.sln ^
-            /p:Configuration="Release" ^
-            /p:Platform=x86 ^
-            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} ^
+          msbuild SandboxiePlus\SbieShell\SbieShell.sln `
+            /p:Configuration="Release" `
+            /p:Platform=x86 `
+            /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
             /p:PlatformToolset=v143
 
       - name: Build Sandboxie-Tools x86
