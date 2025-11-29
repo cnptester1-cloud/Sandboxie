@@ -1,177 +1,60 @@
-name: CI Final Complete
+name: Sandboxie Plus Build
 
 on:
   workflow_dispatch:
 
-env:
-  WINDOWS_SDK_VERSION: 10.0.26100.0
-
 jobs:
-  Build_x64:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Setup Build Environment
-        run: |
-          echo "=== Build Environment ==="
-          echo "Available Windows SDKs:"
-          dir "C:\Program Files (x86)\Windows Kits\10\Lib" -ErrorAction SilentlyContinue
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
 
-      - name: Setup msbuild
-        uses: microsoft/setup-msbuild@v2
+    - name: Build Core Components
+      run: |
+        echo "Building Sandboxie Core..."
+        msbuild Sandboxie\SandboxDll.sln /p:Configuration="SbieRelease" /p:Platform=Win32
+        msbuild Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64
 
-      # Build Core Components (không cần driver)
-      - name: Build Sandboxie Core x86
-        run: |
-          msbuild Sandboxie\SandboxDll.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:4 -verbosity:minimal
+    - name: Build Tools
+      run: |
+        echo "Building Tools..."
+        msbuild SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64
 
-      - name: Build Sandboxie Core x64
-        run: |
-          msbuild Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:4 -verbosity:minimal
+    - name: Download Official Release for Driver
+      run: |
+        echo "Downloading official release for driver..."
+        curl -L -o official.zip "https://github.com/sandboxie-plus/Sandboxie-plus/releases/download/1.11.1/Sandboxie_x64.zip"
+        7z x official.zip -oofficial_extracted
 
-      # Build Tools
-      - name: Build Sandboxie-Tools x64
-        run: |
-          msbuild SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:4
+    - name: Create Package
+      run: |
+        # Create output directory
+        mkdir Installer\SbiePlus_x64
+        
+        echo "Copying core files..."
+        # Copy core files
+        copy "bin\x64\SbieRelease\SbieDll.dll" "Installer\SbiePlus_x64\"
+        copy "bin\x64\SbieRelease\SbieSvc.exe" "Installer\SbiePlus_x64\" 
+        copy "bin\x64\SbieRelease\Start.exe" "Installer\SbiePlus_x64\"
+        
+        # Copy driver from official release
+        copy "official_extracted\SbieDrv.sys" "Installer\SbiePlus_x64\"
+        
+        # Copy tools
+        copy "SandboxieTools\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse
+        
+        echo "Package contents:"
+        dir "Installer\SbiePlus_x64\"
 
-      # Download Driver từ bản release chính thức
-      - name: Download Pre-built Driver
-        run: |
-          echo "=== DOWNLOADING PRE-BUILT DRIVER ==="
-          
-          # Tạo thư mục tạm
-          if (!(Test-Path "temp_driver")) { 
-            New-Item -ItemType Directory -Path "temp_driver" -Force 
-          }
-          
-          # Tải bản release ổn định
-          echo "Downloading official Sandboxie Plus release..."
-          curl -L -o "temp_driver\sandboxie.zip" "https://github.com/sandboxie-plus/Sandboxie-plus/releases/download/1.11.1/Sandboxie_x64.zip"
-          
-          if (Test-Path "temp_driver\sandboxie.zip") {
-            echo "Extracting driver..."
-            7z x "temp_driver\sandboxie.zip" -o"temp_driver\extracted" -y
-            
-            # Tìm driver trong extracted files
-            $driver = Get-ChildItem "temp_driver\extracted" -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($driver) {
-              echo "✅ Found driver: $($driver.FullName)"
-              copy $driver.FullName "temp_driver\SbieDrv.sys" -Force
-            } else {
-              echo "❌ Driver not found in release"
-            }
-          } else {
-            echo "❌ Failed to download release"
-          }
-
-      # Tạo package hoàn chỉnh với driver
-      - name: Create Complete Package
-        run: |
-          # Tạo thư mục output
-          if (!(Test-Path "Installer\SbiePlus_x64")) { 
-            New-Item -ItemType Directory -Path "Installer\SbiePlus_x64" -Force 
-          }
-          
-          echo "=== CREATING SANDBOXIE PACKAGE ==="
-          
-          # Copy Core Files
-          $coreFiles = @(
-            @{Source="bin\x64\SbieRelease\SbieDll.dll"; Dest="SbieDll.dll"},
-            @{Source="bin\x64\SbieRelease\SbieSvc.exe"; Dest="SbieSvc.exe"},
-            @{Source="bin\x64\SbieRelease\Start.exe"; Dest="Start.exe"},
-            @{Source="bin\Win32\SbieRelease\SbieDll.dll"; Dest="SbieDll32.dll"}
-          )
-          
-          foreach ($file in $coreFiles) {
-            if (Test-Path $file.Source) {
-              copy $file.Source "Installer\SbiePlus_x64\$($file.Dest)" -Force
-              echo "✅ $($file.Dest)"
-            }
-          }
-          
-          # Copy Driver (từ pre-built hoặc build)
-          if (Test-Path "temp_driver\SbieDrv.sys") {
-            copy "temp_driver\SbieDrv.sys" "Installer\SbiePlus_x64\SbieDrv.sys" -Force
-            echo "✅ SbieDrv.sys (from official release)"
-          } else {
-            # Thử tìm driver đã build
-            $builtDriver = Get-ChildItem -Recurse -Filter "SbieDrv.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($builtDriver) {
-              copy $builtDriver.FullName "Installer\SbiePlus_x64\SbieDrv.sys" -Force
-              echo "✅ SbieDrv.sys (built locally)"
-            } else {
-              echo "❌ SbieDrv.sys - DRIVER MISSING"
-              echo "NOTE: Driver will need to be obtained separately" | Out-File "Installer\SbiePlus_x64\README_DRIVER.txt"
-            }
-          }
-          
-          # Copy Tools
-          if (Test-Path "SandboxieTools\x64\Release") {
-            copy "SandboxieTools\x64\Release\*" "Installer\SbiePlus_x64\" -Recurse -Force
-            echo "✅ Tools"
-          }
-          
-          # Tạo file readme
-          $readmeContent = @"
-Sandboxie Plus Portable Build
-=============================
-
-Build Date: $(Get-Date)
-Source: GitHub Actions CI
-
-Components:
-- Core Sandboxie DLLs and Services
-- Command Line Tools
-- Driver: $(if (Test-Path "Installer\SbiePlus_x64\SbieDrv.sys") { "PRESENT" } else { "MISSING - obtain from official release" })
-
-Usage:
-1. Extract to desired location
-2. Run SbieSvc.exe as Administrator to start service
-3. Use Start.exe to launch programs in sandbox
-
-Note: If driver is missing, download from:
-https://github.com/sandboxie-plus/Sandboxie-plus/releases
-"@
-          
-          $readmeContent | Out-File "Installer\SbiePlus_x64\README.txt" -Encoding UTF8
-          
-          echo "=== PACKAGE CONTENTS ==="
-          Get-ChildItem "Installer\SbiePlus_x64\" | Select-Object Name, Length | Format-Table
-          
-          # Final check
-          $criticalFiles = @("SbieDll.dll", "SbieSvc.exe", "Start.exe")
-          $allPresent = $true
-          
-          foreach ($file in $criticalFiles) {
-            if (Test-Path "Installer\SbiePlus_x64\$file") {
-              echo "✅ $file - READY"
-            } else {
-              echo "❌ $file - MISSING"
-              $allPresent = $false
-            }
-          }
-          
-          if (Test-Path "Installer\SbiePlus_x64\SbieDrv.sys") {
-            echo "✅ SbieDrv.sys - READY"
-          } else {
-            echo "⚠️  SbieDrv.sys - MISSING (core functionality limited)"
-          }
-          
-          if (-not $allPresent) {
-            echo "::error::MISSING CRITICAL CORE FILES"
-            exit 1
-          }
-
-      # Upload Artifacts
-      - name: Upload Sandboxie x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: Sandboxie_x64
-          path: |
-            Installer/SbiePlus_x64/*
-          retention-days: 60
-          if-no-files-found: error
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Sandboxie-Plus
+        path: Installer/SbiePlus_x64
+        retention-days: 60
