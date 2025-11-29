@@ -20,16 +20,11 @@ jobs:
           echo "=== Build Environment ==="
           echo "Available Windows SDKs:"
           dir "C:\Program Files (x86)\Windows Kits\10\Lib" -ErrorAction SilentlyContinue
-          echo "Available Platform Toolsets:"
-          dir "C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -ErrorAction SilentlyContinue
 
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
-    #
-    # Build Core Components (không cần driver)
-    #
-
+      # Build Core Components (không cần driver)
       - name: Build Sandboxie Core x86
         run: |
           msbuild Sandboxie\SandboxDll.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:4 -verbosity:minimal
@@ -38,24 +33,20 @@ jobs:
         run: |
           msbuild Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:4 -verbosity:minimal
 
-    #
-    # Build Tools
-    #
-
+      # Build Tools
       - name: Build Sandboxie-Tools x64
         run: |
           msbuild SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:4
 
-    #
-    # Download Driver từ bản release chính thức
-    #
-
+      # Download Driver từ bản release chính thức
       - name: Download Pre-built Driver
         run: |
           echo "=== DOWNLOADING PRE-BUILT DRIVER ==="
           
           # Tạo thư mục tạm
-          if (!(Test-Path "temp_driver")) { New-Item -ItemType Directory -Path "temp_driver" -Force }
+          if (!(Test-Path "temp_driver")) { 
+            New-Item -ItemType Directory -Path "temp_driver" -Force 
+          }
           
           # Tải bản release ổn định
           echo "Downloading official Sandboxie Plus release..."
@@ -77,10 +68,7 @@ jobs:
             echo "❌ Failed to download release"
           }
 
-    #
-    # Tạo package hoàn chỉnh với driver
-    #
-
+      # Tạo package hoàn chỉnh với driver
       - name: Create Complete Package
         run: |
           # Tạo thư mục output
@@ -178,10 +166,7 @@ https://github.com/sandboxie-plus/Sandboxie-plus/releases
             exit 1
           }
 
-    #
-    # Upload Artifacts
-    #
-
+      # Upload Artifacts
       - name: Upload Sandboxie x64
         uses: actions/upload-artifact@v4
         with:
