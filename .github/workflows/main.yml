@@ -19,10 +19,16 @@ jobs:
         run: |
           echo "=== Available Tools ==="
           echo "MSBuild: $(where msbuild)"
+          echo "NuGet: $(where nuget)"
           echo "7z: C:\Program Files\7-Zip\7z.exe"
 
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v1
+        with:
+          nuget-version: 'latest'
 
     #
     # Compile Sandboxie Core
@@ -35,12 +41,24 @@ jobs:
         run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Build SbieShell với SDK Fix - ĐÃ SỬA CÚ PHÁP
+    # Build SbieShell với NuGet Fix
     #
+
+      - name: Restore NuGet Packages for SbieShell
+        run: |
+          echo "=== Restoring NuGet Packages ==="
+          nuget restore SandboxiePlus\SbieShell\SbieShell.sln
+          
+          # Kiểm tra package đã được restore
+          if (Test-Path "SandboxiePlus\SbieShell\packages") {
+            echo "Packages restored successfully"
+            dir "SandboxiePlus\SbieShell\packages"
+          }
 
       - name: Build SbieShell x64
         run: |
           msbuild SandboxiePlus\SbieShell\SbieShell.sln `
+            /t:build `
             /p:Configuration="Release" `
             /p:Platform=x64 `
             /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
@@ -55,35 +73,26 @@ jobs:
         run: msbuild /t:build SandboxieTools\SandboxieTools.sln /p:Configuration="Release" /p:Platform=x64 -maxcpucount:8
 
     #
-    # Build Sandboxie Plus UI (Qt) - ĐÃ SỬA CÚ PHÁP
+    # Build Sandboxie Plus UI (Qt) - Optional
     #
 
       - name: Find and Build Qt UI
         run: |
           echo "=== Looking for Qt ==="
-          # Tìm Qt tự động
           $qtPaths = @(
             "C:\Qt\5.15.2\msvc2019_64",
             "C:\Qt\5.15.2\msvc2019", 
-            "C:\Qt\6.5.0\msvc2019_64",
-            "C:\Qt\6.2.4\msvc2019_64"
+            "C:\Qt\6.5.0\msvc2019_64"
           )
           
           $foundQt = $false
           foreach ($path in $qtPaths) {
             if (Test-Path "$path\bin\qmake.exe") {
               echo "Found Qt at: $path"
-              $env:QTDIR = $path
-              & "$path\bin\qmake.exe" --version
-              
-              # Build Sandboxie Plus
               & "$path\bin\qmake.exe" SandboxiePlus\SandboxiePlus.pro -spec win32-msvc
               
-              # Tìm jom hoặc nmake
               if (Get-Command jom -ErrorAction SilentlyContinue) {
                 jom
-              } elseif (Get-Command nmake -ErrorAction SilentlyContinue) {
-                nmake
               } else {
                 msbuild release\SandboxiePlus.vcxproj /p:Configuration=Release
               }
@@ -155,12 +164,19 @@ jobs:
       - name: Setup msbuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v1
+
       - name: Build Sandboxie x86 (all)
         run: msbuild /t:build Sandboxie\Sandbox.sln /p:Configuration="SbieRelease" /p:Platform=Win32 -maxcpucount:8
 
-      - name: Build SbieShell x86 - ĐÃ SỬA CÚ PHÁP
+      - name: Restore NuGet Packages for SbieShell x86
+        run: nuget restore SandboxiePlus\SbieShell\SbieShell.sln
+
+      - name: Build SbieShell x86
         run: |
           msbuild SandboxiePlus\SbieShell\SbieShell.sln `
+            /t:build `
             /p:Configuration="Release" `
             /p:Platform=x86 `
             /p:WindowsTargetPlatformVersion=${{ env.WINDOWS_SDK_VERSION }} `
